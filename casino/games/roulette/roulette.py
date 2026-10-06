@@ -2,7 +2,6 @@ import random
 from typing import List, Optional
 from time import sleep
 import time
-import sys
 import shutil
 import re
 
@@ -47,29 +46,6 @@ def cprint_table_center(block: str) -> None:
 
 def display_roulette_topbar(ctx: GameContext) -> None:
     display_topbar(ctx.account, **HEADER_OPTIONS)
-
-
-def refresh_roulette_topbar(ctx: GameContext) -> None:
-    # Number of lines occupied by the topbar: header (3 lines) + user/balance line + margin
-    header_lines = len(ROULETTE_HEADER.strip("\n").splitlines())
-    margin = HEADER_OPTIONS.get("margin", 1)
-    total_lines = header_lines + 1 + margin
-
-    sys.stdout.write("\x1b[s")  # Save current cursor position
-    sys.stdout.write("\x1b[H")  # Move cursor to top-left corner
-
-    # Clear all topbar lines
-    for _ in range(total_lines):
-        sys.stdout.write("\x1b[2K")  # clear line
-        sys.stdout.write("\x1b[1B")  # down 1 line
-
-    # Move back to top-left and redraw the topbar
-    sys.stdout.write("\x1b[H")
-    display_roulette_topbar(ctx)
-
-    # Restore cursor position so the rest of the screen stays intact
-    sys.stdout.write("\x1b[u")
-    sys.stdout.flush()
 
 
 STANDARD_AMERICAN_ROULETTE_WHEEL = [
@@ -275,13 +251,17 @@ class Roulette:
         sequence = (wheel_sequence * TOTAL_ROTATIONS) + wheel_sequence[:random_index + 1]
         self.wheel_animation(ctx, sequence)
 
-        winning_number = self.winning_value[0]
-        winning_color  = self.winning_value[1]
-
-        cprint(f"Winning number: {winning_number}")
-        cprint(f"Winning color: {winning_color}")
-
         return self.winning_value
+
+    def show_round_results(self, ctx: GameContext, payout_lines: list[str]) -> None:
+        assert self.winning_value is not None
+        clear_screen()
+        display_roulette_topbar(ctx)
+        self.print_wheel(highlighted_num = self.winning_value[0])
+        cprint(f"Winning number: {self.winning_value[0]}")
+        cprint(f"Winning color: {self.winning_value[1]}")
+        for line in payout_lines:
+            cprint(line)
 
     def reset_round(self) -> None:
         self.bets.clear()
@@ -417,7 +397,7 @@ class Roulette:
             }
             i += 1  # Move to next user
 
-    def payout(self) -> None:
+    def payout(self) -> list[str]:
         """
         Pay out all players who picked the right color or number.
         """
@@ -425,7 +405,7 @@ class Roulette:
         winning_number = self.winning_value[0]
         winning_color  = self.winning_value[1]
 
-        cprint("Paying out all winners...")
+        lines = ["Paying out all winners..."]
         i = 0
         for _, bet in self.bets.items():
             bet_type   = bet["type"]
@@ -447,13 +427,14 @@ class Roulette:
             if win_multiplier > 1:
                 win_amount = bet_amount * win_multiplier
                 self.accounts[i].deposit(win_amount)
-                cprint(f"Player {i+1}: Won {win_amount} coins.")
+                lines.append(f"Player {i+1}: Won {win_amount} coins.")
             else:
-                cprint(f"Player {i+1}: Lost {bet_amount} coins.")
+                lines.append(f"Player {i+1}: Lost {bet_amount} coins.")
             
             i += 1
 
-        cprint("Finished payout.")
+        lines.append("Finished payout.")
+        return lines
 
 
 class AmericanRoulette(Roulette):
@@ -499,14 +480,14 @@ def play_roulette(context: GameContext) -> None:
             break
 
         roulette.spin_wheel(context)
-        roulette.payout()
+        payout_lines = roulette.payout()
         if context.account.balance > prev_balance:
             stats.wins += 1
             stats.rounds_played += 1
         elif context.account.balance < prev_balance:
             stats.losses += 1
             stats.rounds_played += 1
-        refresh_roulette_topbar(context)
+        roulette.show_round_results(context, payout_lines)
 
         play_again = None
 

@@ -2,7 +2,6 @@ import random
 from typing import List, Optional
 from time import sleep
 import time
-import sys
 import shutil
 import re
 import casino.utils as utils
@@ -108,29 +107,6 @@ ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
 def display_roulette_topbar(ctx: GameContext) -> None:
     display_topbar(ctx.account, **HEADER_OPTIONS)
-
-
-def refresh_roulette_topbar(ctx: GameContext) -> None:
-    # Number of lines occupied by the topbar: header (3 lines) + user/balance line + margin
-    header_lines = len(ROULETTE_HEADER.strip("\n").splitlines())
-    margin = HEADER_OPTIONS.get("margin", 1)
-    total_lines = header_lines + 1 + margin
-
-    sys.stdout.write("\x1b[s")  # Save current cursor position
-    sys.stdout.write("\x1b[H")  # Move cursor to top-left corner
-
-    # Clear all topbar lines
-    for _ in range(total_lines):
-        sys.stdout.write("\x1b[2K")  # clear line
-        sys.stdout.write("\x1b[1B")  # down 1 line
-
-    # Move back to top-left and redraw the topbar
-    sys.stdout.write("\x1b[H")
-    display_roulette_topbar(ctx)
-
-    # Restore cursor position so the rest of the screen stays intact
-    sys.stdout.write("\x1b[u")
-    sys.stdout.flush()
 
 
 def _visible_len(s: str) -> int:
@@ -303,11 +279,15 @@ class Roulette:
         sequence = (wheel_sequence * TOTAL_ROTATIONS) + wheel_sequence[:random_index + 1]
         self.wheel_animation(ctx, sequence)
 
-        winning_number = self.winning_value[0]
-        winning_color = self.winning_value[1]
+        return self.winning_value
 
-        cprint(f"Winning number: {winning_number}")
-        cprint(f"Winning color: {winning_color}")
+    def show_round_results(self, ctx: GameContext, payout_lines: list[str]) -> None:
+        assert self.winning_value is not None
+        clear_screen()
+        display_roulette_topbar(ctx)
+        self.print_wheel(highlighted_num=self.winning_value[0])
+        cprint(f"Winning number: {self.winning_value[0]}")
+        cprint(f"Winning color: {self.winning_value[1]}")
 
         account_id = str(ctx.account.aid)
         bet = self.bets.get(account_id)
@@ -316,7 +296,8 @@ class Roulette:
         else:
             cprint(f"Your bet: {self._format_bet(bet)}")
 
-        return self.winning_value
+        for line in payout_lines:
+            cprint(line)
 
     def reset_round(self) -> None:
         self.bets.clear()
@@ -554,7 +535,7 @@ class Roulette:
 
         return f"{a} on {t}:{v}"
 
-    def payout(self) -> None:
+    def payout(self) -> list[str]:
         assert self.winning_value is not None
         winning_number = self.winning_value[0]
 
@@ -562,7 +543,7 @@ class Roulette:
             str(a.aid): (a, index + 1)
             for index, a in enumerate(self.accounts)}
 
-        cprint("Paying out all winners...")
+        lines = ["Paying out all winners..."]
         is_zero = (winning_number == "0")
         winning_int = None if is_zero else int(winning_number)
         for account_id, bet in self.bets.items():
@@ -586,11 +567,12 @@ class Roulette:
             if win_multiplier > 1:
                 win_amount = bet_amount * win_multiplier
                 account.deposit(win_amount)
-                cprint(f"Player {player_number}: Won {win_amount} coins.")
+                lines.append(f"Player {player_number}: Won {win_amount} coins.")
             else:
-                cprint(f"Player {player_number}: Lost {bet_amount} coins.")
+                lines.append(f"Player {player_number}: Lost {bet_amount} coins.")
 
-        cprint("Finished payout.")
+        lines.append("Finished payout.")
+        return lines
 
     def _compute_win_multiplier(self, bet_type: str, bet_value: str, winning_number: str,
                                 winning_int: Optional[int], is_zero: bool) -> int:
@@ -665,14 +647,14 @@ def play_european_roulette(context: GameContext) -> None:
             break
 
         roulette.spin_wheel(context)
-        roulette.payout()
+        payout_lines = roulette.payout()
         if context.account.balance > prev_balance:
             stats.wins += 1
             stats.rounds_played += 1
         elif context.account.balance < prev_balance:
             stats.losses += 1
             stats.rounds_played += 1
-        refresh_roulette_topbar(context)
+        roulette.show_round_results(context, payout_lines)
 
         # play again?
         play_again = cinput("🤵: Would you like to play another round (Y/n): ").strip().lower()
